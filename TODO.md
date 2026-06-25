@@ -18,9 +18,9 @@ Roadmap for improving this C++ option-pricing project from a single-file impleme
 
 ## 2. Black-Scholes model
 
-* [ ] Implement European call pricing.
-* [ ] Implement European put pricing.
-* [ ] Add put-call parity validation:
+* [x] Implement European call pricing.   
+* [x] Implement European put pricing.  
+* [x] Add put-call parity validation:    
 
 $C - P = S_0 - K e^{-rT}$
 
@@ -35,18 +35,18 @@ $C - P = S_0 - K e^{-rT}$
 
 ## 3. Greeks
 
-* [ ] Implement Delta.
-* [ ] Implement Gamma.
-* [ ] Implement Vega.
-* [ ] Implement Theta.
-* [ ] Implement Rho.
+* [x] Implement Delta.
+* [x] Implement Gamma.
+* [x] Implement Vega.
+* [x] Implement Theta.
+* [x] Implement Rho.
 * [ ] Add tests comparing analytical Greeks against finite-difference approximations.
 
 ## 4. Cox-Ross-Rubinstein binomial model
 
-* [ ] Implement European call pricing.
+* [x] Implement European call pricing.
 * [ ] Implement European put pricing.
-* [ ] Add configurable number of time steps.
+* [x] Add configurable number of time steps.
 * [ ] Validate risk-neutral probability:
 
 $p = \frac{e^{r\Delta t} - d}{u - d}$
