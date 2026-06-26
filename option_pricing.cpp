@@ -11,11 +11,14 @@
 using namespace BloombergLP;
 using namespace blpapi;
 
-// ---- your normal helpers ----
-double norm_pdf(double x) { return (1.0 / std::sqrt(2.0 * M_PI)) * std::exp(-0.5 * x * x); }
-double norm_cdf(double x) { return 0.5 * std::erfc(-x / std::sqrt(2.0)); }
+double norm_pdf(double x) {
+    return (1.0 / std::sqrt(2 * M_PI)) * std::exp(-0.5 * x * x);
+}
 
-// ---- your EuropeanOption struct (unchanged) ----
+double norm_cdf(double x) {
+    return (0.5 * std::erfc(-x / std::sqrt(2.0)));
+}
+
 struct EuropeanOption {
     double S, K, r, sigma, T, P;
     int N;
@@ -23,6 +26,51 @@ struct EuropeanOption {
     double d2() { return d1() - sigma*std::sqrt(T); }
     double black_scholes_call() { return S*norm_cdf(d1()) - K*std::exp(-r*T)*norm_cdf(d2()); }
     double black_scholes_put()  { return K*std::exp(-r*T)*norm_cdf(-d2()) - S*norm_cdf(-d1()); }
+
+    double crr_call() {
+        double dt = T / N;
+        double u = std::exp(sigma * std::sqrt(dt));
+        double d = 1.0 / u;
+        double p = (std::exp(r * dt) - d) / (u - d);
+        double disc = std::exp(-r * dt);       
+
+        std::vector<double> V(N + 1);      
+        for (int j = 0; j <= N; j++) {
+            double S_j = S * std::pow(u, j) * std::pow(d, N - j);
+            V[j] = std::max(S_j - K, 0.0); 
+        }
+
+        for (int i = N - 1; i >= 0; i--) {      // backward through layers
+            for (int j = 0; j <= i; j++) {      // nodes in layer 
+                V[j] = disc * (p * V[j + 1] + (1 - p) * V[j]);
+
+            }
+        }
+        return V[0];
+    }
+
+    double crr_put() {
+        double dt = T / N;
+        double u = std::exp(sigma * std::sqrt(dt));
+        double d = 1.0 / u;
+        double p = (std::exp(r * dt) - d) / (u - d);
+        double disc = std::exp(-r * dt);       
+
+        std::vector<double> V(N + 1);      
+        for (int j = 0; j <= N; j++) {
+            double S_j = S * std::pow(u, j) * std::pow(d, N - j);
+            V[j] = std::max(K - S_j, 0.0); 
+        }
+
+        for (int i = N - 1; i >= 0; i--) {      // backward through layers
+            for (int j = 0; j <= i; j++) {      // nodes in layer 
+                V[j] = disc * (p * V[j + 1] + (1 - p) * V[j]);
+
+            }
+        }
+        return V[0];
+    }
+
     double delta_call() { return norm_cdf(d1()); }
     double gamma()      { return norm_pdf(d1()) / (S*sigma*std::sqrt(T)); }
     double vega()       { return S*norm_pdf(d1())*std::sqrt(T); }
@@ -31,11 +79,11 @@ struct EuropeanOption {
 };
 
 int main() {
-    SessionOptions opts;
+    SessionOptions opts; 
     opts.setServerHost("localhost");
     opts.setServerPort(8194);
 
-    Session session(opts);
+    Session session(opts); 
     if (!session.start() || !session.openService("//blp/refdata")) {
         std::cerr << "Failed to start/open //blp/refdata\n";
         return 1;
@@ -43,90 +91,72 @@ int main() {
 
     Service ref = session.getService("//blp/refdata");
     Request req = ref.createRequest("ReferenceDataRequest");
-    req.append("securities", "AAPL US Equity");
-    req.append("fields", "PX_LAST");          // → S (spot price)
-    req.append("fields", "VOLATILITY_90D");   // → sigma  ** VERIFY THIS FIELD NAME IN FLDS<GO> **
+    req.append("securities", "EZJ LN 12 C640 Equity"); 
+    req.append("fields", "OPT_UNDL_PX");                    // Underlying Value -- S
+    req.append("fields", "OPT_STRIKE_PX");                  // Strike Price -- K 
+    req.append("fields", "IVOL_ASK");                       // Implied Volatility Using Ask Price -- sigma (!!!)
+    req.append("fields", "OPT_EXPIRE_DT");                  // Expiration Date -- T
+    req.append("fields", "EOD_RISK_FREE_RATE_ASK");         // End of Day Risk Free Rate Ask -- r
 
-    std::cout << "Sending Request: " << req << "\n";
+    std::cout << "Sending Request: " << req << std::endl;
     session.sendRequest(req);
-
-    // variables we'll fill from Bloomberg
-    double spot = 0.0;
-    double vol = 0.0;
-    bool gotSpot = false, gotVol = false;
 
     while (true) {
         Event ev = session.nextEvent();
-        MessageIterator it(ev);
+        MessageIterator it(ev); 
         while (it.next()) {
-            Message msg = it.message();
+            Message msg = it.message(); 
             if (msg.messageType() != Name("ReferenceDataResponse")) continue;
 
             Element secDataArr = msg.getElement("securityData");
             for (size_t i = 0; i < secDataArr.numValues(); ++i) {
-                Element secData = secDataArr.getValueAsElement(i);
+                Element secData = secDataArr.getValueAsElement(i); 
                 std::string sec = secData.getElementAsString("security");
 
                 if (secData.hasElement("securityError")) {
-                    std::cerr << "[SECURITY ERROR] " << sec << "\n";
+                    Element err = secData.getElement("securityError");
+                    std::cerr << "[SECURITY ERROR] " << sec << ":" << err.getElementAsString("message") << "\n";
                     continue;
                 }
 
-                // report any field problems (e.g. wrong field name)
                 if (secData.hasElement("fieldExceptions")) {
-                    Element fex = secData.getElement("fieldExceptions");
+                    Element fex = secData.getElement("fieldExceptions"); 
                     for (size_t j = 0; j < fex.numValues(); ++j) {
                         Element ex = fex.getValueAsElement(j);
-                        std::cerr << "[FIELD EXC] " << ex.getElementAsString("fieldId")
-                                  << ": " << ex.getElement("errorInfo").getElementAsString("message") << "\n";
+                        std::string fld = ex.getElementAsString("fieldId");
+                        std::string reason = ex.getElement("errorInfo").getElementAsString("message");
+                        std::cerr << "[FIELD EXC] " << sec << " - " << fld << ": " << reason << "\n";
                     }
                 }
 
+                // --- draw the values from fieldData ---
                 Element fdata = secData.getElement("fieldData");
 
-                // pull spot
-                if (fdata.hasElement("PX_LAST")) {
-                    spot = fdata.getElementAsFloat64("PX_LAST");
-                    gotSpot = true;
-                }
-                // pull volatility (VERIFY field name + units!)
-                if (fdata.hasElement("VOLATILITY_90D")) {
-                    vol = fdata.getElementAsFloat64("VOLATILITY_90D") / 100.0;  // /100 if field is in %
-                    gotVol = true;
-                }
+                EuropeanOption opt;   // make the option object
+                opt.S = 0; opt.K = 0; opt.sigma = 0; opt.r = 0; opt.T = 1; opt.N = 500;
+                // pull each field AS A DOUBLE, with a safety check
+                if (fdata.hasElement("OPT_UNDL_PX"))   opt.S = fdata.getElementAsFloat64("OPT_UNDL_PX");
+                if (fdata.hasElement("OPT_STRIKE_PX")) opt.K = fdata.getElementAsFloat64("OPT_STRIKE_PX");
+                if (fdata.hasElement("IVOL_ASK"))      opt.sigma = fdata.getElementAsFloat64("IVOL_ASK") / 100.0;  // /100 if % 
+                //if (fdata.hasElement("EOD_RISK_FREE_RATE_ASK")) opt.r = fdata.getElementAsFloat64("EOD_RISK_FREE_RATE_ASK") / 100.0;
+                std::cout << "Enter risk-free rate (e.g. 0.05): ";
+                std::cin >> opt.r;
+                std::cout << "Enter time to maturity in years (e.g. 0.5): ";
+                std::cin >> opt.T;
+
+                // --- price it ---
+                std::cout << "\n--- " << sec << " ---\n";
+                std::cout << "S: " << opt.S << "  K: " << opt.K 
+                          << "  sigma: " << opt.sigma << "  r: " << opt.r << "\n";
+                std::cout << "Call (Black-Scholes): " << opt.black_scholes_call() << "\n";
+                std::cout << "Put (Black-Scholes):  " << opt.black_scholes_put() << "\n";
+                std::cout << "Call (Cox-Ross-Rubinstein): " << opt.crr_call() << "\n";
+                std::cout << "Put (Cox-Ross-Rubinstein):  " << opt.crr_put() << "\n";
+
+
             }
         }
         if (ev.eventType() == Event::RESPONSE) break;
     }
-
-    // ---- feed the pricer ----
-    if (gotSpot && gotVol) {
-        EuropeanOption opt;
-        opt.S = spot;        // from Bloomberg
-        opt.sigma = vol;     // from Bloomberg
-        opt.K = spot;        // hardcoded: at-the-money strike = spot (your choice)
-        opt.r = 0.05;        // hardcoded risk-free rate
-        opt.T = 1.0;         // hardcoded: 1 year
-        opt.N = 500;
-
-        std::cout << "\n--- Pulled from Bloomberg ---\n";
-        std::cout << "Spot (S):       " << opt.S << "\n";
-        std::cout << "Volatility (s): " << opt.sigma << "\n";
-        std::cout << "--- Hardcoded ---\n";
-        std::cout << "Strike (K):     " << opt.K << " (ATM)\n";
-        std::cout << "Rate (r):       " << opt.r << "\n";
-        std::cout << "Maturity (T):   " << opt.T << "\n";
-        std::cout << "\n--- Pricer output ---\n";
-        std::cout << "Call price: " << opt.black_scholes_call() << "\n";
-        std::cout << "Put price:  " << opt.black_scholes_put() << "\n";
-        std::cout << "Delta:      " << opt.delta_call() << "\n";
-        std::cout << "Gamma:      " << opt.gamma() << "\n";
-        std::cout << "Vega:       " << opt.vega() << "\n";
-    } else {
-        std::cerr << "\nDidn't get both spot and vol — check field names in FLDS<GO>.\n";
-        if (!gotSpot) std::cerr << "  Missing: PX_LAST\n";
-        if (!gotVol)  std::cerr << "  Missing: VOLATILITY_90D (wrong field name?)\n";
-    }
-
-    return 0;
+    return 0; 
 }
