@@ -71,6 +71,22 @@ struct EuropeanOption {
         return V[0];
     }
 
+    void put_call_parity() {
+        double C = black_scholes_call();
+        double P_val = black_scholes_put();   // compute put here too
+        double lhs = C - P_val;
+        double rhs = S - K * std::exp(-r * T);
+        double tolerance = 1e-9;
+
+        std::cout << "C - P = " << lhs << "\n";
+        std::cout << "S - K*exp(-rT) = " << rhs << "\n";
+        if (std::abs(lhs - rhs) < tolerance)
+            std::cout << "Put-Call Parity established.\n";
+        else
+            std::cout << "Put-Call Parity is NOT established.\n";
+    }
+
+
     double delta_call() { return norm_cdf(d1()); }
     double gamma()      { return norm_pdf(d1()) / (S*sigma*std::sqrt(T)); }
     double vega()       { return S*norm_pdf(d1())*std::sqrt(T); }
@@ -153,7 +169,13 @@ int main() {
                 std::cout << "Call (Cox-Ross-Rubinstein): " << opt.crr_call() << "\n";
                 std::cout << "Put (Cox-Ross-Rubinstein):  " << opt.crr_put() << "\n";
 
+                std::cout << "Delta (Call): " << opt.delta_call() << "\n";
+                std::cout << "Gamma: " << opt.gamma() << "\n";
+                std::cout << "Vega: " << opt.vega() << "\n";
+                std::cout << "Theta (Call): " << opt.theta_call() << "\n";
+                std::cout << "Rho (Call): " << opt.rho_call() << "\n";
 
+                opt.put_call_parity(); 
             }
         }
         if (ev.eventType() == Event::RESPONSE) break;
